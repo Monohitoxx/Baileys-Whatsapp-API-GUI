@@ -1018,33 +1018,52 @@ async function handleCustomAction(action, jid) {
         console.log(`執行自定義動作: ${action.title}`);
         console.log(`執行指令: ${action.command}`);
 
-        // 檢查命令是否存在
-        if (!action.command || typeof action.command !== 'string' || action.command.trim() === '') {
-            console.error('自定義動作命令為空或未定義:', action);
-            await sock.sendMessage(jid, { 
-                text: `錯誤：自定義動作 "${action.title}" 的命令未設定或為空` 
-            });
+        // 如果動作類型為 "reply"（或未指定，預設為回覆），直接回覆訊息
+        if (!action.actionType || action.actionType === 'reply') {
+            let messageText = action.replyMessage || action.responseTemplate || '';
+            // 如果模板中包含 {timestamp}，替換為當前時間戳
+            messageText = messageText.replace(/\{timestamp\}/g, formatTimestamp());
+
+            if (!messageText || messageText.trim() === '') {
+                messageText = '（沒有設定回覆訊息）';
+            }
+
+            await sock.sendMessage(jid, { text: messageText });
+            console.log('已發送回覆訊息');
             return;
         }
 
-        // 執行命令
-        const result = await executeSSHCommand(action.command, action.outputFilters);
-        
-        // 記錄命令執行結果
-        console.log('指令執行結果:');
-        console.log('----------------------------------------');
-        console.log(result);
-        console.log('----------------------------------------');
+        // 如果動作類型為 "executeSSH"，則需要執行命令
+        if (action.actionType === 'executeSSH') {
+            // 檢查命令是否存在
+            if (!action.command || typeof action.command !== 'string' || action.command.trim() === '') {
+                console.error('自定義動作命令為空或未定義:', action);
+                await sock.sendMessage(jid, { 
+                    text: `錯誤：自定義動作 "${action.title}" 的命令未設定或為空` 
+                });
+                return;
+            }
 
-        // 處理訊息模板
-        let messageText = action.responseTemplate || '{command_response_content}';
-        messageText = messageText
-            .replace(/\{timestamp\}/g, formatTimestamp())
-            .replace('{command_response_content}', result);
+            // 執行命令
+            const result = await executeSSHCommand(action.command, action.outputFilters);
+            
+            // 處理訊息模板（若未提供，使用默認模板）
+            let messageText = action.responseTemplate || '{command_response_content}';
+            messageText = messageText
+                .replace(/\{timestamp\}/g, formatTimestamp())
+                .replace('{command_response_content}', result);
 
-        // 發送訊息
-        await sock.sendMessage(jid, { text: messageText });
-        console.log('自定義動作執行完成，已發送回應');
+            // 發送訊息
+            await sock.sendMessage(jid, { text: messageText });
+            console.log('自定義動作執行完成，已發送回應');
+            return;
+        }
+
+        // 其他未知 actionType 的處理
+        console.warn(`未知的自定義動作類型: ${action.actionType}`);
+        await sock.sendMessage(jid, { 
+            text: `錯誤：未知的自定義動作類型 (${action.actionType})` 
+        });
 
     } catch (error) {
         console.error('執行自定義動作失敗:', error);
