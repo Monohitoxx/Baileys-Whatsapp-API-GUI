@@ -1052,8 +1052,8 @@ async function handleCustomAction(action, jid) {
             return;
         }
 
-        // 如果動作類型為 "executeSSH"，則需要執行命令
-        if (action.actionType === 'executeSSH') {
+        // 如果動作類型為 "executeSSH" 或 "command"，則需要執行命令
+        if (action.actionType === 'executeSSH' || action.actionType === 'command') {
             // 檢查命令是否存在
             if (!action.command || typeof action.command !== 'string' || action.command.trim() === '') {
                 console.error('自定義動作命令為空或未定義:', action);
