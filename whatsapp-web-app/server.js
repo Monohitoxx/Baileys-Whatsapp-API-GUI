@@ -40,7 +40,26 @@ let config = {
 async function loadConfig() {
     try {
         const data = await fsp.readFile(CONFIG_FILE, 'utf8');
-        config = JSON.parse(data);
+        const loadedConfig = JSON.parse(data);
+        
+        // 深層合併配置
+        config = {
+            ...config,
+            ...loadedConfig,
+            server: {
+                ...config.server,
+                ...loadedConfig.server
+            },
+            email: {
+                ...config.email,
+                ...loadedConfig.email,
+                smtp: {
+                    ...config.email.smtp,
+                    ...loadedConfig.email?.smtp
+                }
+            }
+        };
+
         console.log('成功載入配置文件');
         
         // 更新 emailConfig
