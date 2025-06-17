@@ -287,8 +287,14 @@ function formatWhatsAppId(id, type) {
 // 修改 SSH 命令執行函數
 async function executeSSHCommand(command, outputFilters = []) {
     return new Promise((resolve, reject) => {
+        // 檢查命令是否存在
+        if (!command || typeof command !== 'string' || command.trim() === '') {
+            reject(new Error('命令不能為空或未定義'));
+            return;
+        }
+        
         // 解析命令和參數
-        const [cmd, ...args] = command.split(' ');
+        const [cmd, ...args] = command.trim().split(' ');
         const sshProcess = spawn(cmd, args);
         
         let stdoutData = '';
@@ -1011,6 +1017,15 @@ async function handleCustomAction(action, jid) {
         // 記錄執行的自定義動作
         console.log(`執行自定義動作: ${action.title}`);
         console.log(`執行指令: ${action.command}`);
+
+        // 檢查命令是否存在
+        if (!action.command || typeof action.command !== 'string' || action.command.trim() === '') {
+            console.error('自定義動作命令為空或未定義:', action);
+            await sock.sendMessage(jid, { 
+                text: `錯誤：自定義動作 "${action.title}" 的命令未設定或為空` 
+            });
+            return;
+        }
 
         // 執行命令
         const result = await executeSSHCommand(action.command, action.outputFilters);
