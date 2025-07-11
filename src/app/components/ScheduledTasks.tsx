@@ -153,8 +153,18 @@ export function ScheduledTasks({ isConnected, groups }: ScheduledTasksProps) {
         }
 
         // 檢查執行日期設定
-        if (task.executionDays.type !== 'everyday' && task.executionDays.days.length === 0) {
-            errors.push('請選擇執行日期');
+        if (task.executionDays.type !== 'everyday') {
+            if (task.executionDays.type === 'specific') {
+                // 對於特定日期類型，檢查 specificDates 陣列
+                if (!task.executionDays.specificDates || task.executionDays.specificDates.length === 0) {
+                    errors.push('請選擇執行日期');
+                }
+            } else {
+                // 對於週週和每月類型，檢查 days 陣列
+                if (!task.executionDays.days || task.executionDays.days.length === 0) {
+                    errors.push('請選擇執行日期');
+                }
+            }
         }
 
         // 如果是 SSH 命令類型，檢查命令

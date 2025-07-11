@@ -416,6 +416,81 @@ function formatTimestamp() {
     }
 }
 
+// 提取任務執行邏輯到獨立函數
+async function executeTask(task, jid, time) {
+    if (!sock || !isConnected || !task.enabled) {
+        console.log(`跳過任務 ${task.title} (${task.id}): 連接狀態不符合要求`);
+        return;
+    }
+
+    try {
+        console.log(`執行任務 "${task.title}" (${task.id}), 時間: ${time}, 發送到: ${jid}`);
+
+        if (task.taskType === 'executeSSH') {
+            try {
+                if (!task.sshCommand || task.sshCommand.trim() === '') {
+                    console.error(`任務 ${task.id} 的命令為空`);
+                    await sock.sendMessage(jid, { 
+                        text: '錯誤：命令為空，無法執行' 
+                    });
+                    return;
+                }
+
+                console.log('執行命令:', task.sshCommand);
+                console.log('使用過濾規則:', task.outputFilters || []);
+                const result = await executeSSHCommand(task.sshCommand, task.outputFilters);
+                console.log('命令執行結果:', result);
+
+                // 獲取當前時間戳
+                const timestamp = formatTimestamp();
+                console.log('生成的時間戳:', timestamp);
+
+                // 處理訊息模板
+                let messageText = task.message || '執行結果：\n{command_response_content}';
+                console.log('原始訊息模板:', messageText);
+
+                // 替換時間戳和命令結果
+                messageText = messageText
+                    .replace(/\{timestamp\}/g, timestamp)
+                    .replace('{command_response_content}', result || '無響應');
+
+                console.log('處理後的訊息:', messageText);
+
+                // 發送訊息
+                await sock.sendMessage(jid, { text: messageText });
+                console.log('訊息發送成功');
+            } catch (error) {
+                console.error('執行命令或發送訊息時出錯:', error);
+                await sock.sendMessage(jid, { 
+                    text: `執行錯誤: ${error.message}` 
+                });
+            }
+        } else {
+            await sock.sendMessage(jid, { text: task.message });
+        }
+
+        if (task.executionType === 'once') {
+            task.enabled = false;
+            await saveTasks();
+            const taskSchedulers = scheduledTasks.get(task.id);
+            if (taskSchedulers) {
+                taskSchedulers.forEach(s => s.stop());
+                scheduledTasks.delete(task.id);
+            }
+            console.log(`單次任務 "${task.title}" 已完成並禁用`);
+        }
+    } catch (error) {
+        console.error(`任務執行失敗: ${error.message}`);
+        try {
+            await sock.sendMessage(jid, { 
+                text: `任務執行失敗: ${error.message}` 
+            });
+        } catch (sendError) {
+            console.error('無法發送錯誤通知:', sendError);
+        }
+    }
+}
+
 // 修改調度任務函數
 function scheduleTask(task) {
     try {
@@ -460,6 +535,42 @@ function scheduleTask(task) {
                 // 將選擇的日期轉換為 cron 格式（1-31）
                 const daysString = task.executionDays.days.join(',');
                 cronExpression = `${minutes} ${hours} ${daysString} * *`;
+            } else if (task.executionDays?.type === 'specific' && task.executionDays.specificDates?.length > 0) {
+                // 對於特定日期，我們需要為每個日期創建一個調度器
+                // 這裡先跳過，稍後用特殊處理方式
+                console.log(`處理特定日期任務: ${task.title} (${task.id})`);
+                
+                // 為每個特定日期創建調度器
+                task.executionDays.specificDates.forEach(dateStr => {
+                    const targetDate = new Date(dateStr);
+                    const today = new Date();
+                    
+                    // 只為未來的日期創建調度器
+                    if (targetDate > today) {
+                        const month = targetDate.getMonth() + 1;
+                        const day = targetDate.getDate();
+                        
+                        // 創建特定日期的 cron 表達式 (分 時 日 月 *)
+                        const specificCronExpression = `${minutes} ${hours} ${day} ${month} *`;
+                        
+                        console.log(`創建特定日期調度: ${dateStr}, Cron: ${specificCronExpression}`);
+                        
+                        try {
+                            const specificScheduler = cron.schedule(specificCronExpression, async () => {
+                                await executeTask(task, jid, time);
+                            });
+                            
+                            if (!scheduledTasks.has(task.id)) {
+                                scheduledTasks.set(task.id, new Set());
+                            }
+                            scheduledTasks.get(task.id).add(specificScheduler);
+                        } catch (cronError) {
+                            console.error(`創建特定日期調度器失敗: ${cronError.message}`);
+                        }
+                    }
+                });
+                
+                return; // 特定日期處理完畢，跳出函數
             } else {
                 console.error(`任務 ${task.id} 的執行日期設定無效`);
                 return;
@@ -468,79 +579,9 @@ function scheduleTask(task) {
             console.log(`創建任務調度: ${task.title} (${task.id}), 時間: ${time}, 類型: ${task.executionDays.type}, Cron: ${cronExpression}`);
             
             try {
+                const jid = formatWhatsAppId(task.targetId, task.targetType);
                 const scheduler = cron.schedule(cronExpression, async () => {
-                    if (!sock || !isConnected || !task.enabled) {
-                        console.log(`跳過任務 ${task.title} (${task.id}): 連接狀態不符合要求`);
-                        return;
-                    }
-
-                    try {
-                        const jid = formatWhatsAppId(task.targetId, task.targetType);
-                        console.log(`執行任務 "${task.title}" (${task.id}), 時間: ${time}, 發送到: ${jid}`);
-
-                        if (task.taskType === 'executeSSH') {
-                            try {
-                                if (!task.sshCommand || task.sshCommand.trim() === '') {
-                                    console.error(`任務 ${task.id} 的命令為空`);
-                                    await sock.sendMessage(jid, { 
-                                        text: '錯誤：命令為空，無法執行' 
-                                    });
-                                    return;
-                                }
-
-                                console.log('執行命令:', task.sshCommand);
-                                console.log('使用過濾規則:', task.outputFilters || []);
-                                const result = await executeSSHCommand(task.sshCommand, task.outputFilters);
-                                console.log('命令執行結果:', result);
-
-                                // 獲取當前時間戳
-                                const timestamp = formatTimestamp();
-                                console.log('生成的時間戳:', timestamp);
-
-                                // 處理訊息模板
-                                let messageText = task.message || '執行結果：\n{command_response_content}';
-                                console.log('原始訊息模板:', messageText);
-
-                                // 替換時間戳和命令結果
-                                messageText = messageText
-                                    .replace(/\{timestamp\}/g, timestamp)
-                                    .replace('{command_response_content}', result || '無響應');
-
-                                console.log('處理後的訊息:', messageText);
-
-                                // 發送訊息
-                                await sock.sendMessage(jid, { text: messageText });
-                                console.log('訊息發送成功');
-                            } catch (error) {
-                                console.error('執行命令或發送訊息時出錯:', error);
-                                await sock.sendMessage(jid, { 
-                                    text: `執行錯誤: ${error.message}` 
-                                });
-                            }
-                        } else {
-                            await sock.sendMessage(jid, { text: task.message });
-                        }
-
-                        if (task.executionType === 'once') {
-                            task.enabled = false;
-                            await saveTasks();
-                            const taskSchedulers = scheduledTasks.get(task.id);
-                            if (taskSchedulers) {
-                                taskSchedulers.forEach(s => s.stop());
-                                scheduledTasks.delete(task.id);
-                            }
-                            console.log(`單次任務 "${task.title}" 已完成並禁用`);
-                        }
-                    } catch (error) {
-                        console.error(`任務執行失敗: ${error.message}`);
-                        try {
-                            await sock.sendMessage(jid, { 
-                                text: `任務執行失敗: ${error.message}` 
-                            });
-                        } catch (sendError) {
-                            console.error('無法發送錯誤通知:', sendError);
-                        }
-                    }
+                    await executeTask(task, jid, time);
                 });
 
                 if (!scheduledTasks.has(task.id)) {
