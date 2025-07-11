@@ -582,7 +582,6 @@ async function connectToWhatsApp() {
         });
 
         sock = makeWASocket({
-            printQRInTerminal: true,
             auth: state,
             logger,
             browser: Browsers.macOS('Desktop'),
@@ -601,6 +600,8 @@ async function connectToWhatsApp() {
                 console.log('收到新的 QR code，等待掃描...');
                 qr = currentQr;
                 isConnected = false;
+                // 可以選擇在終端顯示 QR code（如果需要的話）
+                // qrcode.generate(currentQr, { small: true });
             }
 
             if(connection === 'open') {
@@ -635,9 +636,32 @@ async function connectToWhatsApp() {
                 
                 isConnected = false;
                 
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                // 401 表示認證失敗，需要重新登入
+                // 403 表示被禁止，通常是因為違反 WhatsApp 政策
+                // 428 表示連接已關閉，通常是正常斷線
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut && 
+                                      statusCode !== DisconnectReason.badSession;
                 
-                if(shouldReconnect) {
+                if(statusCode === 401) {
+                    console.log('認證失效 (401)，需要重新掃描 QR code');
+                    if(sock) {
+                        sock.ev.removeAllListeners();
+                        sock = null;
+                    }
+                    qr = null;
+                    userInfo = null;
+                    // 清理認證文件
+                    try {
+                        const authFiles = await fsp.readdir(AUTH_FOLDER);
+                        for (const file of authFiles) {
+                            await fsp.unlink(path.join(AUTH_FOLDER, file));
+                        }
+                        console.log('已清理過期的認證文件');
+                    } catch (error) {
+                        console.error('清理認證文件失敗:', error);
+                    }
+                    setTimeout(connectToWhatsApp, 2000);
+                } else if(shouldReconnect) {
                     console.log('嘗試重新連接...');
                     if(sock) {
                         sock.ev.removeAllListeners();
